@@ -1,0 +1,47 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension" xmlns:iis="http://schemas.microsoft.com/wix/IIsExtension">
+
+  <?include $(var.ProjectDir)buildenv.wxi?>
+
+  <Fragment>
+    <Feature Id="feature_zbridge_web" Title="zBridge ASP.NET Web Site" Level="1" TypicalDefault="install" Display="hidden"
+			Description="Installs zBridge ASP.NET Web Site" Absent="disallow" AllowAdvertise="no" InstallDefault="followParent">
+      <ComponentGroupRef Id="componentgroup_zbridge_web"/>
+    </Feature>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="componentgroup_zbridge_web">
+      <ComponentRef Id="zbridge_web_streamer_ashx" />
+      <ComponentRef Id="zbridge_web_web_config" />
+      <ComponentRef Id="zbridge_web_zuki_web_zbridgeweb_dll" />
+    </ComponentGroup>
+  </Fragment>
+
+  <Fragment>
+    <DirectoryRef Id="ZBRIDGEDIR">
+      <Directory Id="ZBRIDGEWEBDIR" Name="web">
+        <Directory Id="ZBRIDGEWEBBINDIR" Name="bin"/>
+      </Directory>
+    </DirectoryRef>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="zbridge_web_streamer_ashx" Directory="ZBRIDGEWEBDIR" Guid="*">
+      <File Id="zbridge_web_streamer_ashx" Source="$(var.ZBridgeSourcePath)web/zbridgeweb/streamer.ashx" KeyPath="yes" Vital="yes" />
+    </Component>
+  </Fragment>
+  
+  <Fragment>
+    <Component Id="zbridge_web_web_config" Directory="ZBRIDGEWEBDIR" Guid="*">
+      <File Id="zbridge_web_web_config" Source="$(var.ZBridgeSourcePath)web/zbridgeweb/Web.config" KeyPath="yes" Vital="yes" />
+    </Component>
+  </Fragment>
+
+  <Fragment>
+    <Component Id="zbridge_web_zuki_web_zbridgeweb_dll" Directory="ZBRIDGEWEBBINDIR" Guid="*">
+      <File Id="zbridge_web_zuki_web_zbridgeweb_dll" Source="$(var.ZBridgeBinPath)zuki.web.zbridgeweb.dll" KeyPath="yes" Vital="yes" />
+    </Component>
+  </Fragment>
+
+</Wix>

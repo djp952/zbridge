@@ -1,0 +1,43 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<Wix xmlns="http://schemas.microsoft.com/wix/2006/wi" xmlns:util="http://schemas.microsoft.com/wix/UtilExtension" xmlns:iis="http://schemas.microsoft.com/wix/IIsExtension">
+
+  <?include $(var.ProjectDir)buildenv.wxi?>
+
+  <Fragment>
+    <Feature Id="feature_zbridge_service" Title="zBridge Service" Level="1" TypicalDefault="install" Display="hidden"
+			Description="Installs zBridge Service" Absent="disallow" AllowAdvertise="no" InstallDefault="followParent">
+      <ComponentGroupRef Id="componentgroup_zbridge_service"/>
+    </Feature>
+  </Fragment>
+
+  <Fragment>
+    <ComponentGroup Id="componentgroup_zbridge_service">
+			<ComponentRef Id="zbridge_service_zuki_web_zbridge_exe" />
+			<ComponentRef Id="zbridge_service_zbridge_vweb_config" />
+		</ComponentGroup>
+  </Fragment>
+
+	<Fragment>
+		<DirectoryRef Id="ZBRIDGEWEBDIR" />
+	</Fragment>
+	
+	<Fragment>
+    <Component Id="zbridge_service_zuki_web_zbridge_exe" Directory="ZBRIDGEDIR" Guid="*">
+      <File Id="zbridge_service_zuki_web_zbridge_exe" Source="$(var.ZBridgeBinPath)zuki.web.zbridge.exe" KeyPath="yes" Vital="yes" />
+
+      <ServiceInstall Id="svc_zbridge_web" Name="zBridgeWebServer" DisplayName="zBridge Web Server"
+        Description="The zBridge Server provides web-based streaming audio capabilities for the Roku Soundbridge streaming audio device"
+        Start="auto" ErrorControl="normal" Type="ownProcess" Vital="no">
+      </ServiceInstall>
+      <ServiceControl Id="svc_zbridge_web" Name="zBridgeWebServer" Stop="both" Remove="uninstall"/>
+    </Component>
+  </Fragment>
+
+	<Fragment>
+		<Component Id="zbridge_service_zbridge_vweb_config" Directory="ZBRIDGEDIR" Guid="*">
+			<File Id="zbridge_service_zbridge_vweb_config" Source="$(var.ZBridgeBinPath)zbridge.vweb.config" KeyPath="yes" Vital="yes" />
+			<util:XmlFile Id="zbridge_service_zbridge_vweb_config_modify" Action="setValue" File="[#zbridge_service_zbridge_vweb_config]" SelectionLanguage="XPath"
+        ElementPath="/webapplicationconfiguration/physicalroot" Value="[ZBRIDGEWEBDIR]"/>		</Component>
+	</Fragment>
+
+</Wix>

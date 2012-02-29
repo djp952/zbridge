@@ -1,0 +1,32 @@
+<?xml version="1.0" encoding="utf-8"?>
+<Include>
+
+  <!-- MergeModulePath -->
+  <!-- Set to the location of the VS2010 Merge Modules on the build machine -->
+  <?if $(env.PROCESSOR_ARCHITECTURE) = "x86" ?>
+  <?define MergeModulePath = $(env.CommonProgramFiles)\Merge Modules\ ?>
+  <?else ?>
+  <?define MergeModulePath = $(env.CommonProgramFiles(x86))\Merge Modules\ ?>
+  <?endif ?>
+
+	<!-- ZBridgeBinPath -->
+	<!-- Set to the platform-specific \bin path for the ZBridge project -->
+	<?define ZBridgeBinPath = $(var.SolutionDir)bin\$(var.Platform)\$(var.Configuration)\ ?>
+
+  <!-- ZBridgeReferencePath -->
+  <!-- Set to the root \reference path for the ZBridge project -->
+  <?define ZBridgeReferencePath = $(var.SolutionDir)reference\ ?>
+
+  <!-- ZBridgeSourcePath -->
+  <!-- Set to the root \src path for the ZBridge project -->
+  <?define ZBridgeSourcePath = $(var.SolutionDir)src\ ?>
+
+  <!-- Win64Flag -->
+  <!-- Set to either YES or NO and can be used with the Win64 attributes on various things -->
+  <?if $(var.Platform) = "x86" ?>
+  <?define Win64Flag = "no" ?>
+  <?else?>
+  <?define Win64Flag = "yes" ?>
+  <?endif?>
+
+</Include>
