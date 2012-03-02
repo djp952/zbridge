@@ -85,7 +85,7 @@ namespace zuki.web.zbridgeweb
 			using (AudioStream stream = new AudioStream(sourceurl))
 			{
 				// Attempt to connect to the source audio stream and return HTTP 503 if unable to
-				try { stream.Connect(); }
+				try { stream.Connect(ref embedMetadata); }
 				catch (Exception)
 				{
 					response.StatusCode = (int)HttpStatusCode.ServiceUnavailable;
@@ -93,21 +93,18 @@ namespace zuki.web.zbridgeweb
 					return;
 				}
 
-				// Hook up the event handlers
-				stream.MetadataChanged += new AudioStream.MetadataChangedEventHandler(OnMetadataChanged);
-
-				// If there is no metadata in the source audio stream, it cannot be re-embedded
-				if (embedMetadata && !stream.HasMetadata) embedMetadata = false;
-
 				// Write content type, metadata flag and any other original stream headers to the client
 				foreach (KeyValuePair<string, string> header in stream.Headers)
 					if (!String.IsNullOrEmpty(header.Value)) response.AppendHeader(header.Key, header.Value);
 				response.ContentType = stream.ContentType;
-				if (embedMetadata) response.AppendHeader("Icy-Metaint", "8192");
+				if (embedMetadata) response.AppendHeader("Icy-Metaint", stream.MetadataInterval.ToString());
 
-				// Stream the data to the client ....
-				if (embedMetadata) StreamWithMetadata(response, stream);
-				else StreamRaw(response, stream);
+				// Continue to read from the source stream and send it to the client
+				while ((response.IsClientConnected) && (stream.IsConnected))
+				{
+					int written = stream.WriteTo(response.OutputStream, 4096);
+					if (written == 0) Thread.Sleep(100);
+				}
 			}
 		}
 
@@ -124,97 +121,10 @@ namespace zuki.web.zbridgeweb
 		}
 
 		//---------------------------------------------------------------------
-		// Private Member Functions
-		//---------------------------------------------------------------------
-
-		/// <summary>
-		/// Aligns a buffer size value
-		/// </summary>
-		/// <param name="val">Buffer size to be aligned</param>
-		/// <param name="alignment">Alignment</param>
-		/// <returns>The aligned buffer size</returns>
-		private static int AlignBufferSize(int val, int alignment)
-		{
-			if (val == 0) return alignment;
-			return val + alignment - (val % alignment);
-		}
-
-		/// <summary>
-		/// Invoked when the stream metadata has changed.  Note that this call
-		/// will come in from another thread and member vars must be protected
-		/// </summary>
-		/// <param name="metadata">New metadata</param>
-		private void OnMetadataChanged(string metadata)
-		{
-			lock (m_metadata)
-			{
-				m_metadata = metadata;
-				Interlocked.Exchange(ref m_metadataChanged, 1);
-			}
-		}
-
-		/// <summary>
-		/// Streams the raw audio data without embedding new metadata
-		/// </summary>
-		/// <param name="response">HttpResponse object instance</param>
-		/// <param name="stream">Source AudioStream object instance</param>
-		private void StreamRaw(HttpResponse response, AudioStream stream)
-		{
-			// Raw output is simple to process, just continue to read from
-			// the source audio stream buffer and send it to the client
-			while ((response.IsClientConnected) && (stream.IsConnected))
-			{
-				int read = stream.WriteTo(response.OutputStream, 4096);
-				if (read == 0) Thread.Sleep(50);
-			}
-		}
-
-		/// <summary>
-		/// Streams the audio data with embedded metadata
-		/// </summary>
-		/// <param name="response">HttpResponse object instance</param>
-		/// <param name="stream">Source AudioStream object instance</param>
-		private void StreamWithMetadata(HttpResponse response, AudioStream stream)
-		{
-			int metacount = 8192;			// Count until metadata
-
-			while ((response.IsClientConnected) && (stream.IsConnected))
-			{
-				// Write buffered audio data to the stream until 8192 bytes have been sent
-				while (metacount > 0)
-				{
-					int bytesToWrite = Math.Min(4096, metacount);
-					int written = stream.WriteTo(response.OutputStream, bytesToWrite);
-					metacount -= written;
-					if (written == 0) Thread.Sleep(50);
-				}
-
-				// Write the metadata block to the client or just a single zero
-				// if the metadata hasn't changed since the last time it was sent
-				if (m_metadataChanged == 0) response.OutputStream.WriteByte(0);
-				else
-				{
-					lock (m_metadata)
-					{
-						byte[] encoded = new byte[AlignBufferSize(m_metadata.Length, 16)];
-						Encoding.UTF8.GetBytes(m_metadata, 0, m_metadata.Length, encoded, 0);
-						response.OutputStream.WriteByte((byte)(encoded.Length / 16));
-						response.OutputStream.Write(encoded, 0, encoded.Length);
-						Interlocked.Exchange(ref m_metadataChanged, 0);
-					}
-				}
-
-				metacount = 8192;				// Reset metadata counter
-			}
-		}
-
-		//---------------------------------------------------------------------
 		// Member Variables
 		//---------------------------------------------------------------------
 
-		private ProcessRequestHandler	m_delegate;					// Async handler
-		private int						m_metadataChanged;			// Metadata changed
-		private string					m_metadata = String.Empty;	// Stream metadata
+		private ProcessRequestHandler			m_delegate;			// Async handler
 	}
 }
 

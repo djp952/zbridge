@@ -106,7 +106,10 @@
     <Compile Include="..\..\..\tmp\version\version.cs">
       <Link>version.cs</Link>
     </Compile>
-    <Compile Include="CircularBuffer.cs" />
+    <Compile Include="AudioStreamBuffer.cs" />
+    <Compile Include="CircularBuffer.cs">
+      <SubType>Code</SubType>
+    </Compile>
     <Compile Include="streamer.ashx.cs">
       <DependentUpon>streamer.ashx</DependentUpon>
     </Compile>

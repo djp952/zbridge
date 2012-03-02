@@ -16,298 +16,182 @@
 //-----------------------------------------------------------------------------
 
 using System;
-using System.Collections;
-using System.Collections.Generic;
 using System.IO;
-using System.Threading;
 
 namespace zuki.web.zbridgeweb
 {
-    public class CircularBuffer<T> : ICollection<T>, IEnumerable<T>, ICollection, IEnumerable
-    {
-        private int capacity;
-        private int size;
-        private int head;
-        private int tail;
-        private T[] buffer;
+	/// <summary>
+	/// Circular byte array data buffer class, based on work presented by alexreg
+	/// at http://circularbuffer.codeplex.com/.  Reduced in scope and performance
+	/// of the main read/write functions have been improved.  Still not inherantly
+	/// thread-safe and must be externally synchronized
+	/// </summary>
+	public class CircularBuffer
+	{
+		/// <summary>
+		/// Instance Constructor
+		/// </summary>
+		/// <param name="capacity">Size of the buffer in bytes</param>
+		public CircularBuffer(int capacity)
+		{
+			if (capacity < 0) throw new ArgumentOutOfRangeException();
 
-        [NonSerialized]
-        private object syncRoot;
+			// Initialize member variables
+			m_capacity = capacity;
+			m_size = 0;
+			m_head = 0;
+			m_tail = 0;
+			m_buffer = new byte[capacity];
+		}
 
-        public CircularBuffer(int capacity)
-            : this(capacity, false)
-        {
-        }
+		//---------------------------------------------------------------------
+		// Methods
+		//---------------------------------------------------------------------
 
-        public CircularBuffer(int capacity, bool allowOverflow)
-        {
-            if (capacity < 0)
-                throw new ArgumentException("capacity must be greater than or equal to zero.",
-                    "capacity");
+		/// <summary>
+		/// Reads a single byte from the circular buffer
+		/// </summary>
+		/// <returns>Head byte from the circualr buffer</returns>
+		public byte Get()
+		{
+			if (m_size == 0) throw new InvalidOperationException("Buffer is empty");
 
-            this.capacity = capacity;
-            size = 0;
-            head = 0;
-            tail = 0;
-            buffer = new T[capacity];
-            AllowOverflow = allowOverflow;
-        }
+			// Grab the head byte from the buffer
+			byte val = m_buffer[m_head];
 
-        public bool AllowOverflow
-        {
-            get;
-            set;
-        }
+			// Move the head pointer and set the new buffer size
+			m_head++;
+			if (m_head == m_capacity) m_head = 0;
+			m_size--;
 
-        public int Capacity
-        {
-            get { return capacity; }
-            set
-            {
-                if (value == capacity)
-                    return;
+			return val;
+		}
+		
+		/// <summary>
+		/// Reads an array of bytes from the circular buffer
+		/// </summary>
+		/// <param name="dest">Destination byte array</param>
+		/// <param name="offset">Offset into the destination byte array</param>
+		/// <param name="count">Number of bytes to write into the array</param>
+		/// <returns>Actual number of bytes written into the array</returns>
+		public int Get(byte[] dest, int offset, int count)
+		{
+			int				read = 0;			// Number of bytes read
+			int				cb;					// Byte counter
 
-                if (value < size)
-                    throw new ArgumentOutOfRangeException("value",
-                        "value must be greater than or equal to the buffer size.");
+			// Calculate the actual amount of data to be read
+			count = Math.Min(count, m_size);
+			if (count == 0) return 0;
 
-                var dst = new T[value];
-                if (size > 0)
-                    CopyTo(dst);
-                buffer = dst;
+			// Determine how many bytes to read from the head to the end of
+			// the buffer array and copy that data
+			cb = Math.Min(count, m_capacity - m_head);
+			Buffer.BlockCopy(m_buffer, m_head, dest, offset, cb);
+			read += cb;
+			m_head += cb;
 
-                capacity = value;
-            }
-        }
+			if (m_head == m_capacity)
+			{
+				m_head = 0;						// Reset head pointer
 
-        public int Size
-        {
-            get { return size; }
-        }
+				// If more data remains to be read, read it from the top of the buffer
+				// and adjust the head to reflect the new position
+				if ((count - read) > 0)
+				{
+					Buffer.BlockCopy(m_buffer, 0, dest, offset + read, count - read);
+					m_head = count - read;
+				}
+			}
 
-        public bool Contains(T item)
-        {
-            int bufferIndex = head;
-            var comparer = EqualityComparer<T>.Default;
-            for (int i = 0; i < size; i++, bufferIndex++)
-            {
-                if (bufferIndex == capacity)
-                    bufferIndex = 0;
+			m_size -= count;
+			return count;
+		}
 
-                if (item == null && buffer[bufferIndex] == null)
-                    return true;
-                else if ((buffer[bufferIndex] != null) &&
-                    comparer.Equals(buffer[bufferIndex], item))
-                    return true;
-            }
+		/// <summary>
+		/// Writes a single byte into the circular buffer
+		/// </summary>
+		/// <param name="val">Value to be written into the buffer</param>
+		public void Put(byte val)
+		{
+			if (m_size == m_capacity) throw new InternalBufferOverflowException("Buffer is full");
 
-            return false;
-        }
+			// Write the new value at the tail of the buffer
+			m_buffer[m_tail] = val;
 
-        public void Clear()
-        {
-            size = 0;
-            head = 0;
-            tail = 0;
-        }
+			// Move the tail pointer and set the new buffer size
+			m_tail++;
+			if (m_tail == m_capacity) m_tail = 0;
+			m_size++;
+		}
 
-        public int Put(T[] src)
-        {
-            return Put(src, 0, src.Length);
-        }
+		/// <summary>
+		/// Writes an array of bytes into the circular buffer
+		/// </summary>
+		/// <param name="source">Source byte array</param>
+		/// <param name="offset">Offset into the source byte array</param>
+		/// <param name="count">Number of bytes to write into the buffer</param>
+		/// <returns>Actual number of bytes written into the buffer</returns> 
+		public int Put(byte[] source, int offset, int count)
+		{
+			int					written = 0;		// Number of bytes written
+			int					cb;					// Byte counter
 
-        public int Put(T[] src, int offset, int count)
-        {
-            int realCount = AllowOverflow ? count : Math.Min(count, capacity - size);
-            int srcIndex = offset;
-            for (int i = 0; i < realCount; i++, tail++, srcIndex++)
-            {
-                if (tail == capacity)
-                    tail = 0;
-                buffer[tail] = src[srcIndex];
-            }
-            size = Math.Min(size + realCount, capacity);
-            return realCount;
-        }
+			// Calculate the actual number of bytes to write into the buffer
+			count = Math.Min(count, m_capacity - m_size);
+			if (count == 0) return 0;
 
-        public void Put(T item)
-        {
-            if (!AllowOverflow && size == capacity)
-                throw new InternalBufferOverflowException("Buffer is full.");
+			// Determine how many bytes to write from the tail to the end of
+			// the buffer array and copy that data
+			cb = Math.Min(count, m_capacity - m_tail);
+			Buffer.BlockCopy(source, offset, m_buffer, m_tail, cb);
+			written += cb;
+			m_tail += cb;
 
-            buffer[tail] = item;
-            if (tail++ == capacity)
-                tail = 0;
-            size++;
-        }
+			if (m_tail == m_capacity)
+			{
+				m_tail = 0;						// Reset tail pointer
 
-        public void Skip(int count)
-        {
-            head += count;
-            if (head >= capacity)
-                head -= capacity;
-        }
+				// If more data remains to be written, write it from the top of the buffer
+				// and adjust the tail to reflect the new position
+				if ((count - written) > 0)
+				{
+					Buffer.BlockCopy(source, offset + written, m_buffer, 0, count - written);
+					m_tail = count - written;
+				}
+			}
 
-        public T[] Get(int count)
-        {
-            var dst = new T[count];
-            Get(dst);
-            return dst;
-        }
+			m_size += count;
+			return count;
+		}
 
-        public int Get(T[] dst)
-        {
-            return Get(dst, 0, dst.Length);
-        }
+		//---------------------------------------------------------------------
+		// Properties
+		//---------------------------------------------------------------------
 
-        public int Get(T[] dst, int offset, int count)
-        {
-            int realCount = Math.Min(count, size);
-            int dstIndex = offset;
-            for (int i = 0; i < realCount; i++, head++, dstIndex++)
-            {
-                if (head == capacity)
-                    head = 0;
-                dst[dstIndex] = buffer[head];
-            }
-            size -= realCount;
-            return realCount;
-        }
+		/// <summary>
+		/// Gets the capacity of the circular buffer
+		/// </summary>
+		public int Capacity
+		{
+			get { return m_capacity; }
+		}
 
-        public T Get()
-        {
-            if (size == 0)
-                throw new InvalidOperationException("Buffer is empty.");
+		/// <summary>
+		/// Gets the size of the data contained in the circular buffer
+		/// </summary>
+		public int Size
+		{
+			get { return m_size; }
+		}
 
-            var item = buffer[head];
-            if (head++ == capacity)
-                head = 0;
-            size--;
-            return item;
-        }
+		//---------------------------------------------------------------------
+		// Member Variables
+		//---------------------------------------------------------------------
 
-        public void CopyTo(T[] array)
-        {
-            CopyTo(array, 0);
-        }
-
-        public void CopyTo(T[] array, int arrayIndex)
-        {
-            CopyTo(0, array, arrayIndex, size);
-        }
-
-        public void CopyTo(int index, T[] array, int arrayIndex, int count)
-        {
-            if (count > size)
-                throw new ArgumentOutOfRangeException("count",
-                    "count cannot be greater than the buffer size.");
-
-            int bufferIndex = head;
-            for (int i = 0; i < count; i++, bufferIndex++, arrayIndex++)
-            {
-                if (bufferIndex == capacity)
-                    bufferIndex = 0;
-                array[arrayIndex] = buffer[bufferIndex];
-            }
-        }
-
-        public IEnumerator<T> GetEnumerator()
-        {
-            int bufferIndex = head;
-            for (int i = 0; i < size; i++, bufferIndex++)
-            {
-                if (bufferIndex == capacity)
-                    bufferIndex = 0;
-
-                yield return buffer[bufferIndex];
-            }
-        }
-
-        public T[] GetBuffer()
-        {
-            return buffer;
-        }
-
-        public T[] ToArray()
-        {
-            var dst = new T[size];
-            CopyTo(dst);
-            return dst;
-        }
-
-        #region ICollection<T> Members
-
-        int ICollection<T>.Count
-        {
-            get { return Size; }
-        }
-
-        bool ICollection<T>.IsReadOnly
-        {
-            get { return false; }
-        }
-
-        void ICollection<T>.Add(T item)
-        {
-            Put(item);
-        }
-
-        bool ICollection<T>.Remove(T item)
-        {
-            if (size == 0)
-                return false;
-
-            Get();
-            return true;
-        }
-
-        #endregion
-
-        #region IEnumerable<T> Members
-
-        IEnumerator<T> IEnumerable<T>.GetEnumerator()
-        {
-            return GetEnumerator();
-        }
-
-        #endregion
-
-        #region ICollection Members
-
-        int ICollection.Count
-        {
-            get { return Size; }
-        }
-
-        bool ICollection.IsSynchronized
-        {
-            get { return false; }
-        }
-
-        object ICollection.SyncRoot
-        {
-            get
-            {
-                if (syncRoot == null)
-                    Interlocked.CompareExchange(ref syncRoot, new object(), null);
-                return syncRoot;
-            }
-        }
-
-        void ICollection.CopyTo(Array array, int arrayIndex)
-        {
-            CopyTo((T[])array, arrayIndex);
-        }
-
-        #endregion
-
-        #region IEnumerable Members
-
-        IEnumerator IEnumerable.GetEnumerator()
-        {
-            return (IEnumerator)GetEnumerator();
-        }
-
-        #endregion
-    }
+		private int				m_capacity;			// Buffer capacity
+		private int				m_size;				// Current buffer size
+		private int				m_head;				// Head (read) pointer
+		private int				m_tail;				// Tail (write) pointer
+		private byte[]			m_buffer;			// Contained byte buffer
+	}
 }

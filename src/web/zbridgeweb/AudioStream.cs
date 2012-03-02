@@ -51,7 +51,7 @@ namespace zuki.web.zbridgeweb
 			m_metadataInterval = -1;
 
 			// Initialize buffer members
-			m_buffer = new CircularBuffer<byte>(BUFFER_SIZE);
+			m_buffer = null;
 			m_stop = new ManualResetEvent(false);
 		}
 
@@ -59,17 +59,6 @@ namespace zuki.web.zbridgeweb
 		/// Finalizer
 		/// </summary>
 		~AudioStream() { Dispose(false); }
-
-		//---------------------------------------------------------------------
-		// Events
-		//---------------------------------------------------------------------
-
-		/// <summary>
-		/// Raised when the stream metadata has changed
-		/// </summary>
-		/// <param name="metadata"></param>
-		public delegate void MetadataChangedEventHandler(string metadata);
-		public event MetadataChangedEventHandler MetadataChanged;
 
 		//---------------------------------------------------------------------
 		// IDisposable Implementation
@@ -115,18 +104,21 @@ namespace zuki.web.zbridgeweb
 		/// <summary>
 		/// Connects to the stream, processes headers, and begins buffering
 		/// </summary>
-		public void Connect()
+		/// <param name="embedMetadata">Flag to include metadata if possible, check on return</param>
+		public void Connect(ref bool embedMetadata)
 		{
 			string					header;					// A single HTTP header string
 
 			if (m_disposed) throw new ObjectDisposedException(typeof(AudioStream).Name);
 			if (m_connected) throw new InvalidOperationException("Audio stream has already been connected");
-	
+
 			// Attempt to to connect to the provided host and port
 			m_tcpClient.Connect(m_uri.Host, m_uri.Port);
 
 			// Set up the request HTTP headers to pass to the server
-			string requestHeaders = String.Format("GET {0} HTTP/1.0\r\nIcy-Metadata:1\r\n\r\n", m_uri.AbsolutePath);
+			string requestHeaders = (embedMetadata) ? 
+				String.Format("GET {0} HTTP/1.0\r\nIcy-Metadata:1\r\n\r\n", m_uri.AbsolutePath) :
+				String.Format("GET {0} HTTP/1.0\r\n\r\n", m_uri.AbsolutePath);
 			byte[] requestHeaderBits = Encoding.UTF8.GetBytes(requestHeaders);
 			m_tcpClient.GetStream().Write(requestHeaderBits, 0, requestHeaderBits.Length);
 
@@ -161,10 +153,15 @@ namespace zuki.web.zbridgeweb
 
 				header = sr.ReadLine();						// Next header
 			}
+
+			// Set the return value for embedded metadata and create the audio stream buffer
+			embedMetadata = (m_metadataInterval > 0);
+			m_buffer = new AudioStreamBuffer(BUFFER_SIZE, embedMetadata);
 			
 			// Launch the background worker thread to begin buffering the audio data
 			m_bufferThread = new Thread(new ThreadStart(BufferThreadProc));
 			m_bufferThread.IsBackground = true;
+			m_bufferThread.Priority = ThreadPriority.AboveNormal;
 			m_bufferThread.Start();
 
 			m_connected = true;								// Stream is now connected
@@ -182,23 +179,8 @@ namespace zuki.web.zbridgeweb
 			if (m_disposed) throw new ObjectDisposedException(typeof(AudioStream).Name);
 			if (!m_connected) throw new InvalidOperationException("Audio stream has not been connected");
 
-			// Pretty simple, just lock down the buffer and read from it.  The
-			// caller is responsible for checking how much data they actually got
-			lock (m_buffer) { return m_buffer.Get(buffer, offset, length); }
-		}
-
-		/// <summary>
-		/// Writes the entire buffer to an output stream
-		/// </summary>
-		/// <param name="output">Output stream</param>
-		/// <returns>Number of bytes written to the stream; may be zero</returns>
-		public int WriteTo(Stream output)
-		{
-			if (m_disposed) throw new ObjectDisposedException(typeof(AudioStream).Name);
-			if (!m_connected) throw new InvalidOperationException("Audio stream has not been connected");
-
-			// Write as much data as is available to the output stream
-			return WriteTo(output, m_buffer.Size); 
+			// AudioStreamBuffer is thread-safe, just read directly from it
+			return m_buffer.Read(buffer, offset, length);
 		}
 
 		/// <summary>
@@ -215,17 +197,12 @@ namespace zuki.web.zbridgeweb
 			// Make sure this is a writable stream
 			if (!output.CanWrite) return 0;
 
-			// Determine the number of bytes to be read, and if there
-			// is no data to return bail out
-			int maxWrite = Math.Min(m_buffer.Size, length);
-			if (maxWrite <= 0) return 0;
-
 			// Allocate a temporary buffer and read the data into it
-			byte[] buffer = new byte[maxWrite];
-			int read = Read(buffer, 0, maxWrite);
+			byte[] buffer = new byte[length];
+			int read = Read(buffer, 0, length);
 
 			// Write the data to the output stream
-			output.Write(buffer, 0, read);
+			if(read > 0) output.Write(buffer, 0, read);
 			return read;
 		}
 
@@ -247,7 +224,7 @@ namespace zuki.web.zbridgeweb
 		}
 
 		/// <summary>
-		/// Indicates if metadata for the stream will be parsed and made available
+		/// Indicates if metadata for the source stream is available
 		/// </summary>
 		public bool HasMetadata
 		{
@@ -286,6 +263,19 @@ namespace zuki.web.zbridgeweb
 			}
 		}
 
+		/// <summary>
+		/// Gets the interval of metadata in the raw output stream
+		/// </summary>
+		public int MetadataInterval
+		{
+			get 
+			{
+				if (m_disposed) throw new ObjectDisposedException(typeof(AudioStream).Name);
+				if (!m_connected) throw new InvalidOperationException("Audio stream has not been connected");
+				return m_buffer.MetadataInterval;
+			}
+		}
+
 		//---------------------------------------------------------------------
 		// Private Member Functions
 		//---------------------------------------------------------------------
@@ -305,7 +295,7 @@ namespace zuki.web.zbridgeweb
 			// For now, just allow the connection to close on a worker exception.  There
 			// isn't any good way to let the client know a bad thing happened, although
 			// some form of logging would certainly be a good idea
-			catch (Exception) { }
+			//catch (Exception) { }
 
 			// Always close the source connection regardless of how this function exits
 			finally { m_tcpClient.Close(); }
@@ -317,25 +307,24 @@ namespace zuki.web.zbridgeweb
 		/// <param name="stream">Data stream</param>
 		private void BufferMetadataStream(NetworkStream stream)
 		{
-			byte[]		readBuffer = new byte[4096];		// 4 KiB read buffer
+			byte[]		buffer = new byte[4096];			// 4 KiB read buffer
 			int			metacount = m_metadataInterval;		// Count to next metadata
 
 			// Continually process data until the thread is told to stop
 			while (!m_stop.WaitOne(0))
 			{
-				// Get the amount of available buffer space.  This doesn't
-				// need to be synchronized as the buffer size can only go
-				// up outside of this thread
-				int availableBuffer = m_buffer.Capacity - m_buffer.Size;
-				if (availableBuffer == 0) { Thread.Sleep(50); continue; }
-
 				// Read up to 4096 bytes of data, or whatever amount will align the
 				// stream at the next metadata interval
-				int maxRead = Math.Min(Math.Min(4096, availableBuffer), metacount);
-				int read = stream.Read(readBuffer, 0, maxRead);
+				int read = stream.Read(buffer, 0, Math.Min(4096, metacount));
 
-				// Write the data to the buffer
-				lock (m_buffer) { m_buffer.Put(readBuffer, 0, read); }
+				// Write the data to the buffer.  If the entire block wasn't written,
+				// the buffer is full so sleep a bit to try and allow it to free up
+				int written = 0;
+				while (written < read)
+				{
+					written += m_buffer.Write(buffer, written, read - written);
+					if (written != read) Thread.Sleep(100);
+				}
 
 				// Check to see if we have reached the metadata interval, and if so
 				// consume that data and reset the interval counter
@@ -354,23 +343,22 @@ namespace zuki.web.zbridgeweb
 		/// <param name="stream">Data stream</param>
 		private void BufferRawStream(NetworkStream stream)
 		{
-			byte[] readBuffer = new byte[4096];		// 4 KiB read buffer
+			byte[] buffer = new byte[4096];			// 4 KiB read buffer
 
 			// Continually process data until the thread is told to stop
 			while (!m_stop.WaitOne(0))
 			{
-				// Get the amount of available buffer space.  This doesn't
-				// need to be synchronized as the buffer size can only go
-				// up outside of this thread
-				int availableBuffer = m_buffer.Capacity - m_buffer.Size;
-				if (availableBuffer == 0) { Thread.Sleep(50); continue; }
-
 				// Read up to 4096 bytes from the network stream
-				int maxRead = Math.Min(4096, availableBuffer);
-				int read = stream.Read(readBuffer, 0, maxRead);
+				int read = stream.Read(buffer, 0, 4096);
 
-				// Write the data to the buffer
-				lock (m_buffer) { m_buffer.Put(readBuffer, 0, read); }
+				// Write the data to the buffer.  If the entire block wasn't written,
+				// the buffer is full so sleep a bit to try and allow it to free up
+				int written = 0;
+				while (written < read)
+				{
+					written += m_buffer.Write(buffer, written, read - written);
+					if (written != read) Thread.Sleep(100);
+				}
 			}
 		}
 
@@ -394,9 +382,8 @@ namespace zuki.web.zbridgeweb
 			do { read += stream.Read(metabuf, read, metalength - read); }
 			while (read < metalength);
 
-			// If an event handler has been registered, decode and clean up the metadata
-			// string, then send it along
-			if (MetadataChanged != null) MetadataChanged(Encoding.UTF8.GetString(metabuf).TrimEnd(new char[] { '\0' }));
+			// Set the new metadata as a string to the stream buffer class
+			m_buffer.SetMetadata(Encoding.UTF8.GetString(metabuf).TrimEnd(new char[] { '\0' }));
 		}
 
 		//---------------------------------------------------------------------
@@ -414,7 +401,7 @@ namespace zuki.web.zbridgeweb
 		private Dictionary<string, string>	m_headers;	// Original headers
 
 		// BUFFER
-		private CircularBuffer<byte>	m_buffer;			// Local buffer
+		private AudioStreamBuffer		m_buffer;			// Data buffer
 		private Thread					m_bufferThread;		// Worker thread
 		private ManualResetEvent		m_stop;				// Stop event
 	}
