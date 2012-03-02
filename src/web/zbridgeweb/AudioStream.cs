@@ -148,7 +148,7 @@ namespace zuki.web.zbridgeweb
 					else if (String.Compare(key, "content-type", true) == 0) m_contentType = value.Trim();
 
 					// EVERYTHING ELSE
-					else m_headers.Add(key, value);
+					else if(!m_headers.ContainsKey(key)) m_headers.Add(key, value);
 				}
 
 				header = sr.ReadLine();						// Next header
