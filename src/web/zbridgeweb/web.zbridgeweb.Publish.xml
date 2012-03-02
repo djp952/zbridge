@@ -1,9 +1,0 @@
-﻿<?xml version="1.0" encoding="utf-8"?>
-<publishData>
-  <publishProfile publishUrl="z:\testweb" deleteExistingFiles="True" ftpAnonymousLogin="False" ftpPassiveMode="True" msdeploySite="" msdeploySiteID="" msdeployRemoteSitePhysicalPath="" msdeployAllowUntrustedCertificate="False" msdeploySkipExtraFilesOnServer="True" msdeployMarkAsApp="False" profileName="Profile1" publishMethod="FileSystem" replaceMatchingFiles="False" userName="" savePWD="False" userPWD="" SelectedForPublish="True">
-    <file relUrl="bin/zuki.web.zbridgeweb.dll" publishTime="02/27/2012 22:55:31" />
-    <file relUrl="bin/zuki.web.zbridgeweb.pdb" publishTime="02/27/2012 22:55:31" />
-    <file relUrl="streamer.ashx" publishTime="02/25/2012 01:12:52" />
-    <file relUrl="Web.config" publishTime="02/27/2012 22:57:18" />
-  </publishProfile>
-</publishData>
