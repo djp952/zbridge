@@ -11,8 +11,7 @@
 // from this software.
 //
 // Contributor(s):
-//	alexreg (original author)
-//	Michael G. Brehm
+//	Michael G. Brehm (original author)
 //-----------------------------------------------------------------------------
 
 using System;
