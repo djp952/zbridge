@@ -66,7 +66,7 @@ namespace zuki.web.zbridgeweb
 			HttpRequest request = context.Request;			// For cleaner code
 			HttpResponse response = context.Response;		// For cleaner code
 
-			context.Response.BufferOutput = false;				// No response buffering
+			context.Response.BufferOutput = false;			// No response buffering
 
 			// Get the source URL from the request query string
 			string sourceurl = request.QueryString["streamurl"];

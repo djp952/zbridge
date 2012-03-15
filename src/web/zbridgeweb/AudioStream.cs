@@ -324,6 +324,7 @@ namespace zuki.web.zbridgeweb
 				{
 					written += m_buffer.Write(buffer, written, read - written);
 					if (written != read) Thread.Sleep(100);
+					if (m_stop.WaitOne(0)) break;
 				}
 
 				// Check to see if we have reached the metadata interval, and if so
@@ -358,6 +359,7 @@ namespace zuki.web.zbridgeweb
 				{
 					written += m_buffer.Write(buffer, written, read - written);
 					if (written != read) Thread.Sleep(100);
+					if (m_stop.WaitOne(0)) break;
 				}
 			}
 		}
